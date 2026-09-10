@@ -2,19 +2,18 @@ provider "aws" {
   region = "ap-south-1"
 }
 
-# Reference existing Security Group
-data "aws_security_group" "eks_project_sg" {
-  name = "eks_project_sg"
-}
-
+# VPC
 resource "aws_vpc" "trainerstacks_vpc" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
   tags = {
     Name = "trainerstacks-vpc"
   }
 }
 
+# Subnets
 resource "aws_subnet" "trainerstacks_subnet" {
   count = 2
   vpc_id                  = aws_vpc.trainerstacks_vpc.id
@@ -23,10 +22,11 @@ resource "aws_subnet" "trainerstacks_subnet" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "trainerstacks-subnet-${count.index}"
+    Name = "trainerstacks-subnet-${count.index + 1}"
   }
 }
 
+# Internet Gateway
 resource "aws_internet_gateway" "trainerstacks_igw" {
   vpc_id = aws_vpc.trainerstacks_vpc.id
 
@@ -35,6 +35,7 @@ resource "aws_internet_gateway" "trainerstacks_igw" {
   }
 }
 
+# Route Table
 resource "aws_route_table" "trainerstacks_route_table" {
   vpc_id = aws_vpc.trainerstacks_vpc.id
 
@@ -48,28 +49,83 @@ resource "aws_route_table" "trainerstacks_route_table" {
   }
 }
 
+# Route Table Association
 resource "aws_route_table_association" "trainerstacks_association" {
   count          = 2
   subnet_id      = aws_subnet.trainerstacks_subnet[count.index].id
   route_table_id = aws_route_table.trainerstacks_route_table.id
 }
 
-# EKS Cluster using existing security group
+# Security Group for EKS Cluster
+resource "aws_security_group" "trainerstacks_cluster_sg" {
+  name_prefix = "trainerstacks-cluster-"
+  vpc_id      = aws_vpc.trainerstacks_vpc.id
+
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "trainerstacks-cluster-sg"
+  }
+}
+
+# Security Group for EKS Nodes
+resource "aws_security_group" "trainerstacks_node_sg" {
+  name_prefix = "trainerstacks-node-"
+  vpc_id      = aws_vpc.trainerstacks_vpc.id
+
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "trainerstacks-node-sg"
+  }
+}
+
+# EKS Cluster
 resource "aws_eks_cluster" "trainerstacks" {
   name     = "trainerstacks-cluster"
   role_arn = aws_iam_role.trainerstacks_cluster_role.arn
 
   vpc_config {
-    subnet_ids         = aws_subnet.trainerstacks_subnet[*].id
-    security_group_ids = [data.aws_security_group.eks_project_sg.id]
+    subnet_ids              = aws_subnet.trainerstacks_subnet[*].id
+    security_group_ids      = [aws_security_group.trainerstacks_cluster_sg.id]
+    endpoint_private_access = true
+    endpoint_public_access  = true
   }
 
   depends_on = [
     aws_iam_role_policy_attachment.trainerstacks_cluster_role_policy
   ]
+
+  tags = {
+    Name = "trainerstacks-cluster"
+  }
 }
 
-# EKS Node Group using existing security group
+# EKS Node Group
 resource "aws_eks_node_group" "trainerstacks" {
   cluster_name    = aws_eks_cluster.trainerstacks.name
   node_group_name = "trainerstacks-node-group"
@@ -86,7 +142,7 @@ resource "aws_eks_node_group" "trainerstacks" {
 
   remote_access {
     ec2_ssh_key               = var.ssh_key_name
-    source_security_group_ids = [data.aws_security_group.eks_project_sg.id]
+    source_security_group_ids = [aws_security_group.trainerstacks_node_sg.id]
   }
 
   depends_on = [
