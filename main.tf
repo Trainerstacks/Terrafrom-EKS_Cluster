@@ -2,6 +2,11 @@ provider "aws" {
   region = "ap-south-1"
 }
 
+# Reference existing Security Group
+data "aws_security_group" "eks_project_sg" {
+  name = "eks_project_sg"
+}
+
 resource "aws_vpc" "trainerstacks_vpc" {
   cidr_block = "10.0.0.0/16"
 
@@ -49,60 +54,22 @@ resource "aws_route_table_association" "trainerstacks_association" {
   route_table_id = aws_route_table.trainerstacks_route_table.id
 }
 
-resource "aws_security_group" "trainerstacks_cluster_sg" {
-  vpc_id = aws_vpc.trainerstacks_vpc.id
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "trainerstacks-cluster-sg"
-  }
-}
-
-resource "aws_security_group" "trainerstacks_node_sg" {
-  vpc_id = aws_vpc.trainerstacks_vpc.id
-
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "trainerstacks-node-sg"
-  }
-}
-
+# EKS Cluster using existing security group
 resource "aws_eks_cluster" "trainerstacks" {
   name     = "trainerstacks-cluster"
   role_arn = aws_iam_role.trainerstacks_cluster_role.arn
 
   vpc_config {
     subnet_ids         = aws_subnet.trainerstacks_subnet[*].id
-    security_group_ids = [aws_security_group.trainerstacks_cluster_sg.id]
+    security_group_ids = [data.aws_security_group.eks_project_sg.id]
   }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.trainerstacks_cluster_role_policy
+  ]
 }
 
-resource "aws_eks_addon" "ebs_csi_driver" {
-  cluster_name    = aws_eks_cluster.trainerstacks.name
-  addon_name      = "aws-ebs-csi-driver"
-  resolve_conflicts_on_create = "OVERWRITE"
-  resolve_conflicts_on_update = "OVERWRITE"
-}
-
+# EKS Node Group using existing security group
 resource "aws_eks_node_group" "trainerstacks" {
   cluster_name    = aws_eks_cluster.trainerstacks.name
   node_group_name = "trainerstacks-node-group"
@@ -118,11 +85,23 @@ resource "aws_eks_node_group" "trainerstacks" {
   instance_types = ["t2.medium"]
 
   remote_access {
-    ec2_ssh_key = var.ssh_key_name
-    source_security_group_ids = [aws_security_group.trainerstacks_node_sg.id]
+    ec2_ssh_key               = var.ssh_key_name
+    source_security_group_ids = [data.aws_security_group.eks_project_sg.id]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.trainerstacks_node_group_role_policy,
+    aws_iam_role_policy_attachment.trainerstacks_node_group_cni_policy,
+    aws_iam_role_policy_attachment.trainerstacks_node_group_registry_policy,
+    aws_eks_cluster.trainerstacks
+  ]
+
+  tags = {
+    Name = "trainerstacks-node-group"
   }
 }
 
+# IAM Role for EKS Cluster
 resource "aws_iam_role" "trainerstacks_cluster_role" {
   name = "trainerstacks-cluster-role"
 
@@ -145,6 +124,7 @@ resource "aws_iam_role_policy_attachment" "trainerstacks_cluster_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
+# IAM Role for Node Group
 resource "aws_iam_role" "trainerstacks_node_group_role" {
   name = "trainerstacks-node-group-role"
 
@@ -175,9 +155,4 @@ resource "aws_iam_role_policy_attachment" "trainerstacks_node_group_cni_policy" 
 resource "aws_iam_role_policy_attachment" "trainerstacks_node_group_registry_policy" {
   role       = aws_iam_role.trainerstacks_node_group_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
-
-resource "aws_iam_role_policy_attachment" "trainerstacks_node_group_ebs_policy" {
-  role       = aws_iam_role.trainerstacks_node_group_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
