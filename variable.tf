@@ -1,5 +1,5 @@
 variable "ssh_key_name" {
-  description = "The name of the SSH key pair to use for instances"
+  description = "The name of the SSH key pair to use for EC2 instances"
   type        = string
   default     = "TrainerStacks"
 }
@@ -11,7 +11,7 @@ variable "aws_region" {
 }
 
 variable "cluster_name" {
-  description = "EKS Cluster Name"
+  description = "Name of the EKS cluster"
   type        = string
   default     = "trainerstacks-cluster"
 }
@@ -38,4 +38,10 @@ variable "instance_type" {
   description = "EC2 instance type for worker nodes"
   type        = string
   default     = "t2.medium"
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for VPC"
+  type        = string
+  default     = "10.0.0.0/16"
 }
